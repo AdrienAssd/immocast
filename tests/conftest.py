@@ -11,7 +11,7 @@ VALID_INPUT = {"surface": 45, "pieces": 2, "code_postal": "75011"}
 PRICE_RANGE = (3000, 30000)
 
 
-def make_fake_model(path, seed=0):
+def fake_model(seed=0):
     rng = np.random.default_rng(seed)
     rows = 500
     features = pd.DataFrame(
@@ -26,8 +26,11 @@ def make_fake_model(path, seed=0):
         + rng.normal(0, 500, rows)
     ).clip(*PRICE_RANGE)
     model = RandomForestRegressor(n_estimators=20, min_samples_leaf=5, random_state=seed)
-    model.fit(features, prix_m2)
-    joblib.dump(model, path)
+    return model.fit(features, prix_m2)
+
+
+def make_fake_model(path, seed=0):
+    joblib.dump(fake_model(seed), path)
     return path
 
 

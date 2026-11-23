@@ -11,7 +11,6 @@ import mlflow
 import pandas as pd
 from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
-
 from model import FEATURES, MODELS, build_model, evaluate, model_params, train
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,7 +24,7 @@ def git_commit() -> str:
         return os.environ["GITHUB_SHA"]
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    except Exception:
+    except (OSError, subprocess.CalledProcessError):
         return "unknown"
 
 

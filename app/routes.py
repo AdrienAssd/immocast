@@ -1,11 +1,14 @@
+import hmac
 import math
 import os
+import threading
 
 from flask import Blueprint, current_app, jsonify, render_template, request
 
 from app.model_loader import FEATURES, TARGET, predict
 
 bp = Blueprint("main", __name__)
+_reload_lock = threading.Lock()
 
 PARIS_POSTAL_CODES = {f"750{a:02d}" for a in range(1, 21)} | {"75116"}
 SURFACE_MIN, SURFACE_MAX = 9, 400
@@ -126,7 +129,29 @@ def model_info():
         model_source=loaded.source if loaded else None,
         model_type=type(loaded.model).__name__ if loaded else None,
         loaded_at=loaded.loaded_at if loaded else None,
+        run_id=loaded.run_id if loaded else None,
         features=FEATURES,
         target=TARGET,
         git_sha=os.environ.get("GIT_SHA"),
+    )
+
+
+@bp.post("/reload")
+def reload_model():
+    token = current_app.config.get("RELOAD_TOKEN")
+    if not token:
+        return jsonify(error="Reload is disabled."), 404
+    provided = request.headers.get("Authorization", "")
+    if not hmac.compare_digest(provided.encode(), f"Bearer {token}".encode()):
+        return jsonify(error="Invalid or missing token."), 401
+
+    with _reload_lock:
+        previous = _model()
+        previous_version = previous.version if previous else None
+        loaded = current_app.extensions["model_loader"]()
+        if loaded is None:
+            return jsonify(status="failed", model_version=previous_version), 503
+        current_app.config["MODEL"] = loaded
+    return jsonify(
+        status="reloaded", previous_version=previous_version, model_version=loaded.version
     )

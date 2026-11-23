@@ -41,7 +41,7 @@ def evaluate(model, df: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
     metrics = {
         "mae": float(mean_absolute_error(df[TARGET], predictions)),
         "mape": float(mean_absolute_percentage_error(df[TARGET], predictions)),
-        "n_rows": int(len(df)),
+        "n_rows": len(df),
     }
     details = df[["id_mutation", "date_mutation", *FEATURES, TARGET]].assign(prediction=predictions)
     return metrics, details
