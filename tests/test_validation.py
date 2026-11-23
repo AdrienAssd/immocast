@@ -1,5 +1,3 @@
-"""Malformed and out-of-range inputs are rejected with a message per field, never predicted."""
-
 import pytest
 
 from tests.conftest import VALID_INPUT, as_form
@@ -10,7 +8,6 @@ def without(field):
 
 
 INVALID_INPUTS = [
-    # field that must be reported, payload
     pytest.param("surface", without("surface"), id="surface-missing"),
     pytest.param("surface", {**VALID_INPUT, "surface": ""}, id="surface-empty"),
     pytest.param("surface", {**VALID_INPUT, "surface": None}, id="surface-null"),

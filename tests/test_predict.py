@@ -1,5 +1,3 @@
-"""Successful predictions and the format of the answer, through the JSON API and the web page."""
-
 import pytest
 
 from tests.conftest import PRICE_RANGE, VALID_INPUT, as_form
@@ -31,7 +29,6 @@ def test_api_returns_prices_and_model_version(client, payload):
     assert isinstance(body["prix_m2"], int) and isinstance(body["prix_total"], int)
     assert PRICE_RANGE[0] <= body["prix_m2"] <= PRICE_RANGE[1]
     surface = float(str(payload["surface"]).replace(",", "."))
-    # prix_total uses the unrounded prix_m2: at most 0.5 EUR per m² away from prix_m2 x surface
     assert abs(body["prix_total"] - body["prix_m2"] * surface) <= 0.5 * surface + 1
     assert body["model_version"] == client.get("/health").get_json()["model_version"]
 

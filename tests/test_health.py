@@ -1,5 +1,3 @@
-"""/health and /model-info: what CI, Render and the CT workflow rely on."""
-
 from app import create_app
 from app.model_loader import DEFAULT_MODEL_PATH, model_path
 from tests.conftest import VALID_INPUT, as_form, make_fake_model
@@ -33,7 +31,7 @@ def test_without_a_model_the_app_starts_but_is_not_healthy(client_without_model)
     info = client_without_model.get("/model-info").get_json()
     assert info["ready"] is False and info["model_version"] is None
 
-    assert client_without_model.get("/").status_code == 200  # the page itself still loads
+    assert client_without_model.get("/").status_code == 200
 
 
 def test_a_corrupted_model_file_does_not_crash_the_app(tmp_path):

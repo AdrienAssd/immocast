@@ -1,6 +1,3 @@
-"""Shared fixtures. The tests never need the real data or the real model: they train a tiny fake
-model with the same features as ml/train.py and save it with joblib, like the real one."""
-
 import joblib
 import numpy as np
 import pandas as pd
@@ -11,11 +8,10 @@ from app import create_app
 from app.model_loader import FEATURES
 
 VALID_INPUT = {"surface": 45, "pieces": 2, "code_postal": "75011"}
-PRICE_RANGE = (3000, 30000)  # prix_m2 range kept by ml/prepare_data.py
+PRICE_RANGE = (3000, 30000)
 
 
 def make_fake_model(path, seed=0):
-    """Train a small model on synthetic Paris-like rows and save it like ml/train.py does."""
     rng = np.random.default_rng(seed)
     rows = 500
     features = pd.DataFrame(
@@ -55,5 +51,4 @@ def client_without_model(tmp_path):
 
 
 def as_form(data):
-    """What a browser sends: every value as text."""
     return {key: str(value) for key, value in data.items()}

@@ -42,7 +42,7 @@ def load_model(path: str | Path | None = None) -> LoadedModel | None:
     try:
         model = joblib.load(path)
         version = _file_version(path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("Could not load the model from %s: %s", path, exc)
         return None
 
