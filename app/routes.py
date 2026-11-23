@@ -1,41 +1,134 @@
-from flask import Blueprint, current_app, render_template, request
+import math
 
-from app.model_loader import predict
+from flask import Blueprint, current_app, jsonify, render_template, request
+
+from app.model_loader import FEATURES, TARGET, predict
 
 bp = Blueprint("main", __name__)
 
 PARIS_POSTAL_CODES = {f"750{a:02d}" for a in range(1, 21)} | {"75116"}
+SURFACE_MIN, SURFACE_MAX = 9, 400  # same limits as ml/prepare_data.py
+PIECES_MIN, PIECES_MAX = 1, 10
 
 
 class InvalidInput(ValueError):
-    pass
+    """Raised with one message per faulty field."""
+
+    def __init__(self, errors: dict):
+        super().__init__(" ".join(errors.values()))
+        self.errors = errors
+
+
+def _is_missing(value) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _number(value):
+    """A finite float from a JSON number or a form string, otherwise None."""
+    if isinstance(value, bool):  # True would silently become 1
+        return None
+    if isinstance(value, str):
+        value = value.strip().replace(",", ".")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def parse_input(data: dict) -> dict:
-    try:
-        surface = float(data["surface"])
-        pieces = int(data["pieces"])
-    except (KeyError, TypeError, ValueError):
-        raise InvalidInput("Living area and number of rooms must be numbers.")
+    """Validate the user input and turn it into the model features."""
+    errors = {}
 
-    code_postal = str(data.get("code_postal", "")).strip()
+    surface = _number(data.get("surface"))
+    if _is_missing(data.get("surface")):
+        errors["surface"] = "Living area is required."
+    elif surface is None:
+        errors["surface"] = "Living area must be a number."
+    elif not SURFACE_MIN <= surface <= SURFACE_MAX:
+        errors["surface"] = f"Living area must be between {SURFACE_MIN} and {SURFACE_MAX} m²."
+
+    pieces = _number(data.get("pieces"))
+    if _is_missing(data.get("pieces")):
+        errors["pieces"] = "Number of rooms is required."
+    elif pieces is None or not pieces.is_integer():
+        errors["pieces"] = "Number of rooms must be a whole number."
+    elif not PIECES_MIN <= pieces <= PIECES_MAX:
+        errors["pieces"] = f"Number of rooms must be between {PIECES_MIN} and {PIECES_MAX}."
+
+    code_postal = data.get("code_postal")
+    if isinstance(code_postal, int) and not isinstance(code_postal, bool):
+        code_postal = str(code_postal)  # 75011 sent as a number: Paris codes have no leading zero
+    code_postal = code_postal.strip() if isinstance(code_postal, str) else ""
     if code_postal not in PARIS_POSTAL_CODES:
-        raise InvalidInput("Postal code must be a Paris postal code (75001 to 75020).")
-    if not 9 <= surface <= 400:
-        raise InvalidInput("Living area must be between 9 and 400 m².")
-    if not 1 <= pieces <= 10:
-        raise InvalidInput("Number of rooms must be between 1 and 10.")
+        errors["code_postal"] = (
+            "Postal code must be a Paris postal code (75001 to 75020, or 75116)."
+        )
 
-    return {"surface": surface, "pieces": pieces, "arrondissement": int(code_postal[-2:])}
+    if errors:
+        raise InvalidInput(errors)
+    return {"surface": surface, "pieces": int(pieces), "arrondissement": int(code_postal[-2:])}
+
+
+def _model():
+    return current_app.config.get("MODEL")
 
 
 @bp.route("/", methods=["GET", "POST"])
 def index():
-    result, error = None, None
+    result, error, status = None, None, 200
     form = request.form.to_dict()
+    loaded = _model()
     if request.method == "POST":
-        try:
-            result = predict(current_app.config["MODEL"], parse_input(form))
-        except InvalidInput as e:
-            error = str(e)
-    return render_template("index.html", result=result, error=error, form=form)
+        if loaded is None:
+            error = "The model is not available right now. Please try again later."
+            status = 503
+        else:
+            try:
+                result = predict(loaded, parse_input(form))
+            except InvalidInput as e:
+                error = str(e)
+    page = render_template("index.html", result=result, error=error, form=form, model=loaded)
+    return page, status
+
+
+@bp.post("/predict")
+def predict_api():
+    """JSON API: {"surface": 45, "pieces": 2, "code_postal": "75011"}."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        example = '{"surface": 45, "pieces": 2, "code_postal": "75011"}'
+        return jsonify(error=f"Send a JSON object, for example {example}."), 400
+
+    loaded = _model()
+    if loaded is None:
+        return jsonify(error="The model is not loaded."), 503
+
+    try:
+        features = parse_input(data)
+    except InvalidInput as e:
+        return jsonify(error=str(e), errors=e.errors), 422
+    return jsonify(predict(loaded, features))
+
+
+@bp.get("/health")
+def health():
+    """200 only when a model is loaded and can answer; 503 otherwise."""
+    loaded = _model()
+    if loaded is None:
+        return jsonify(status="unavailable", reason="model not loaded"), 503
+    return jsonify(status="ok", model_version=loaded.version)
+
+
+@bp.get("/model-info")
+def model_info():
+    loaded = _model()
+    return jsonify(
+        ready=loaded is not None,
+        model_version=loaded.version if loaded else None,
+        model_source=loaded.source if loaded else None,
+        model_type=type(loaded.model).__name__ if loaded else None,
+        loaded_at=loaded.loaded_at if loaded else None,
+        features=FEATURES,
+        target=TARGET,
+    )
