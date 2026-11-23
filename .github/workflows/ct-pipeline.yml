@@ -1,0 +1,134 @@
+name: Continuous training
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Run the training pipeline or roll back production
+        type: choice
+        required: true
+        default: pipeline
+        options:
+          - pipeline
+          - rollback
+      dataset_version:
+        description: Dataset version delivered (pipeline only)
+        type: choice
+        required: true
+        default: v1
+        options:
+          - v1
+          - v2
+          - v3
+      rollback_version:
+        description: Previously approved model version to restore (rollback only)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: immocast-production-model
+  cancel-in-progress: false
+
+jobs:
+  ct:
+    name: ${{ inputs.operation == 'rollback' && format('Rollback to version {0}', inputs.rollback_version) || format('Pipeline on {0}', inputs.dataset_version) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    env:
+      MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+      MLFLOW_TRACKING_USERNAME: ${{ vars.MLFLOW_TRACKING_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+      MODEL_NAME: ${{ vars.MODEL_NAME || 'immocast' }}
+      RUN_OUTPUT_DIR: results
+      PROD_URL: ${{ vars.PROD_URL }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Fetch the dataset version from DVC
+        if: ${{ inputs.operation == 'pipeline' }}
+        env:
+          DATASET_VERSION: ${{ inputs.dataset_version }}
+          DAGSHUB_TOKEN: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+        run: |
+          dvc remote modify origin --local access_key_id "$DAGSHUB_TOKEN"
+          dvc remote modify origin --local secret_access_key "$DAGSHUB_TOKEN"
+          dvc pull "data/${DATASET_VERSION}.dvc"
+
+      - name: Validate, evaluate, retrain and promote
+        if: ${{ inputs.operation == 'pipeline' }}
+        env:
+          DATASET_VERSION: ${{ inputs.dataset_version }}
+        run: python ml/pipeline.py --dataset-version "$DATASET_VERSION"
+
+      - name: Restore a previously approved version
+        if: ${{ inputs.operation == 'rollback' }}
+        env:
+          TARGET_VERSION: ${{ inputs.rollback_version }}
+        run: |
+          if [ -z "$TARGET_VERSION" ]; then
+            echo "::error::rollback_version is required for a rollback"
+            exit 1
+          fi
+          python ml/pipeline.py --rollback "$TARGET_VERSION"
+
+      - name: Read the decision
+        id: decision
+        if: ${{ always() }}
+        run: |
+          if [ ! -f results/decision.json ]; then
+            echo "No decision.json was produced." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python - <<'EOF'
+          import json, os
+          d = json.load(open("results/decision.json"))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"decision={d.get('decision', '')}\n")
+              out.write(f"champion_after={d.get('champion_after') or ''}\n")
+          rows = ["operation", "dataset_version", "validation", "decision", "reason",
+                  "champion_before", "champion_after", "champion_mae", "candidate_mae", "run_id"]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("## Continuous training decision\n\n| Field | Value |\n|---|---|\n")
+              for key in rows:
+                  if key in d and d[key] is not None:
+                      value = f"{d[key]:.0f}" if isinstance(d[key], float) else d[key]
+                      summary.write(f"| {key} | {value} |\n")
+          EOF
+
+      - name: Refresh the production model
+        if: ${{ success() && steps.decision.outputs.champion_after != '' }}
+        env:
+          RELOAD_TOKEN: ${{ secrets.RELOAD_TOKEN }}
+        run: |
+          curl -fsS --retry 6 --retry-delay 20 --retry-all-errors --max-time 120 \
+            -X POST "$PROD_URL/reload" -H "Authorization: Bearer $RELOAD_TOKEN"
+
+      - name: Verify the live model with a prediction
+        if: ${{ success() && steps.decision.outputs.champion_after != '' }}
+        env:
+          EXPECTED_VERSION: ${{ steps.decision.outputs.champion_after }}
+        run: python scripts/smoke_test.py --url "$PROD_URL" --expected-version "$EXPECTED_VERSION" --timeout 600
+
+      - name: Upload the decision and DVC evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: ct-results-${{ inputs.operation }}-${{ inputs.operation == 'rollback' && inputs.rollback_version || inputs.dataset_version }}
+          path: results/
+          if-no-files-found: warn
