@@ -1,15 +1,19 @@
+import argparse
 from pathlib import Path
 from urllib.request import urlretrieve
 
 import pandas as pd
 
 BASE_URL = "https://files.data.gouv.fr/geo-dvf/latest/csv/{year}/departements/75.csv.gz"
-YEARS = [2021, 2022, 2023]
+YEARS = [2021, 2022, 2023, 2024, 2025]
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 RAW_DIR = DATA_DIR / "raw"
 
-TRAIN_PERIOD = ("2021-01-01", "2022-12-31")
-EVALUATION_PERIOD = ("2023-01-01", "2023-06-30")
+VERSIONS = {
+    "v1": {"train": ("2021-01-01", "2022-12-31"), "evaluation": ("2023-01-01", "2023-06-30")},
+    "v2": {"train": ("2021-01-01", "2023-12-31"), "evaluation": ("2024-01-01", "2024-12-31")},
+    "v3": {"train": ("2021-01-01", "2024-12-31"), "evaluation": ("2025-01-01", "2025-12-31")},
+}
 
 COLUMNS = ["id_mutation", "date_mutation", "surface", "pieces", "arrondissement", "prix_m2"]
 
@@ -56,15 +60,29 @@ def between(df, start, end):
     return df[(df["date_mutation"] >= start) & (df["date_mutation"] <= end)]
 
 
+def build_version(df, version):
+    spec = VERSIONS[version]
+    train = between(df, *spec["train"])
+    evaluation = between(df, *spec["evaluation"])
+    assert train["date_mutation"].max() < evaluation["date_mutation"].min()
+    assert set(train["id_mutation"]).isdisjoint(evaluation["id_mutation"])
+
+    out = DATA_DIR / version
+    out.mkdir(parents=True, exist_ok=True)
+    train.to_csv(out / "train.csv", index=False)
+    evaluation.to_csv(out / "evaluation.csv", index=False)
+    print(f"{version}: train={len(train)} evaluation={len(evaluation)}")
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--versions", nargs="+", choices=list(VERSIONS), default=list(VERSIONS))
+    args = parser.parse_args()
+
     raw = pd.concat((pd.read_csv(p, low_memory=False) for p in download()), ignore_index=True)
     df = clean(raw)
-    train = between(df, *TRAIN_PERIOD)
-    evaluation = between(df, *EVALUATION_PERIOD)
-    DATA_DIR.mkdir(exist_ok=True)
-    train.to_csv(DATA_DIR / "train.csv", index=False)
-    evaluation.to_csv(DATA_DIR / "evaluation.csv", index=False)
-    print(f"train={len(train)} evaluation={len(evaluation)}")
+    for version in args.versions:
+        build_version(df, version)
 
 
 if __name__ == "__main__":

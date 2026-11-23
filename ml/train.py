@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import joblib
@@ -14,8 +15,12 @@ TARGET = "prix_m2"
 
 
 def main():
-    train = pd.read_csv(DATA_DIR / "train.csv")
-    evaluation = pd.read_csv(DATA_DIR / "evaluation.csv")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset-version", default="v1")
+    args = parser.parse_args()
+
+    train = pd.read_csv(DATA_DIR / args.dataset_version / "train.csv")
+    evaluation = pd.read_csv(DATA_DIR / args.dataset_version / "evaluation.csv")
 
     model = RandomForestRegressor(n_estimators=200, min_samples_leaf=20, n_jobs=-1, random_state=42)
     model.fit(train[FEATURES], train[TARGET])
