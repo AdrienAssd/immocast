@@ -13,7 +13,8 @@ immocast/
 │   └── templates/
 ├── ml/                  data preparation and training
 │   ├── prepare_data.py
-│   ├── train.py
+│   ├── model.py         features, models and evaluation
+│   ├── train.py         training with MLflow tracking
 │   └── README_data.md
 ├── data/                DVC pointers only (*.dvc)
 ├── requirements.txt
@@ -58,12 +59,33 @@ or rebuild it from data.gouv.fr:
 python ml/prepare_data.py
 ```
 
+Configure MLflow tracking on DagsHub (PowerShell, same token as DVC):
+
+```powershell
+$env:MLFLOW_TRACKING_URI = "https://dagshub.com/AdrienAssd/immocast.mlflow"
+$env:MLFLOW_TRACKING_USERNAME = "<dagshub-username>"
+$env:MLFLOW_TRACKING_PASSWORD = "<dagshub-token>"
+```
+
+Without these variables, runs are stored locally in `mlruns/` (ignored by Git).
+
 Train a model and start the app:
 
 ```bash
-python ml/train.py --dataset-version v1
+python ml/train.py --dataset-version v1 --model rf
 flask --app app run
 ```
+
+`ml/train.py` logs each run in the `immocast` MLflow experiment: Git commit, dataset version, DVC hash, hyperparameters, MAE and MAPE on the held-out evaluation split, the model and the evaluation predictions. It also saves `models/model.joblib` for the local app.
+
+| Option | Effect |
+|---|---|
+| `--dataset-version v1` | Dataset version under `data/` |
+| `--model rf` or `--model hgb` | Random forest baseline or histogram gradient boosting candidate |
+| `--register immocast-dev` | Registers the model as a new version of `immocast-dev` |
+| `--set-champion` | Moves the `champion` alias to that version |
+
+`immocast-dev` is the development registry model. The production model `immocast` is only updated by the continuous training workflow.
 
 Open http://localhost:5000.
 
