@@ -107,7 +107,13 @@ Data, models, virtual environments and credentials are never committed (see `.gi
 
 ## Workflows
 
-No GitHub Actions workflow yet. Each workflow and its trigger will be documented here when it is added.
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `CI/CD` (`.github/workflows/cicd.yml`) | Pull request into `dev`, `staging` or `main` | Ruff lint, pytest, Docker build, container started with a test model and smoke-tested |
+| `CI/CD` | Push to `staging` | Same checks on the release candidate (staging validation) |
+| `CI/CD` | Push to `main` | Same checks, then push `immocast:<commit sha>` to Docker Hub, deploy to Render and smoke-test the live URL |
+
+The `Lint and tests` and `Docker build and smoke test` jobs are required checks on `dev`, `staging` and `main`. Deployment details are in `DEPLOYMENT.md`.
 
 ## Team
 

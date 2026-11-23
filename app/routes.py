@@ -1,4 +1,5 @@
 import math
+import os
 
 from flask import Blueprint, current_app, jsonify, render_template, request
 
@@ -127,4 +128,5 @@ def model_info():
         loaded_at=loaded.loaded_at if loaded else None,
         features=FEATURES,
         target=TARGET,
+        git_sha=os.environ.get("GIT_SHA"),
     )
