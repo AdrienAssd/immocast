@@ -1,5 +1,6 @@
 import hmac
 import math
+import os
 import threading
 
 from flask import Blueprint, current_app, jsonify, render_template, request
@@ -58,7 +59,7 @@ def parse_input(data: dict) -> dict:
 
     code_postal = data.get("code_postal")
     if isinstance(code_postal, int) and not isinstance(code_postal, bool):
-        code_postal = str(code_postal)
+        code_postal = str(code_postal)  # 75011 sent as a number: Paris codes have no leading zero
     code_postal = code_postal.strip() if isinstance(code_postal, str) else ""
     if code_postal not in PARIS_POSTAL_CODES:
         errors["code_postal"] = (
@@ -131,6 +132,7 @@ def model_info():
         run_id=loaded.run_id if loaded else None,
         features=FEATURES,
         target=TARGET,
+        git_sha=os.environ.get("GIT_SHA"),
     )
 
 
