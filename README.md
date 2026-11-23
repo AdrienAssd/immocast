@@ -30,6 +30,22 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+### External services
+
+| Service | Used for | URL |
+|---|---|---|
+| DagsHub Storage | DVC remote holding the dataset versions v1, v2 and v3 | https://dagshub.com/AdrienAssd/immocast |
+| DagsHub MLflow | Experiment tracking and model registry | https://dagshub.com/AdrienAssd/immocast.mlflow |
+
+Each team member is a collaborator of the DagsHub project and uses their own access token (DagsHub → Settings → Tokens). Tokens are never committed.
+
+Configure DVC once after cloning. The token is written to `.dvc/config.local`, which is ignored by Git:
+
+```bash
+dvc remote modify origin --local access_key_id <dagshub-token>
+dvc remote modify origin --local secret_access_key <dagshub-token>
+```
+
 Get the data, either from the DVC remote:
 
 ```bash
