@@ -7,12 +7,11 @@ from app.model_loader import FEATURES, TARGET, predict
 bp = Blueprint("main", __name__)
 
 PARIS_POSTAL_CODES = {f"750{a:02d}" for a in range(1, 21)} | {"75116"}
-SURFACE_MIN, SURFACE_MAX = 9, 400  # same limits as ml/prepare_data.py
+SURFACE_MIN, SURFACE_MAX = 9, 400
 PIECES_MIN, PIECES_MAX = 1, 10
 
 
 class InvalidInput(ValueError):
-    """Raised with one message per faulty field."""
 
     def __init__(self, errors: dict):
         super().__init__(" ".join(errors.values()))
@@ -24,8 +23,7 @@ def _is_missing(value) -> bool:
 
 
 def _number(value):
-    """A finite float from a JSON number or a form string, otherwise None."""
-    if isinstance(value, bool):  # True would silently become 1
+    if isinstance(value, bool):
         return None
     if isinstance(value, str):
         value = value.strip().replace(",", ".")
@@ -37,7 +35,6 @@ def _number(value):
 
 
 def parse_input(data: dict) -> dict:
-    """Validate the user input and turn it into the model features."""
     errors = {}
 
     surface = _number(data.get("surface"))
@@ -94,7 +91,6 @@ def index():
 
 @bp.post("/predict")
 def predict_api():
-    """JSON API: {"surface": 45, "pieces": 2, "code_postal": "75011"}."""
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         example = '{"surface": 45, "pieces": 2, "code_postal": "75011"}'
