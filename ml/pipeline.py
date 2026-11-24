@@ -9,6 +9,7 @@ from pathlib import Path
 import mlflow
 import pandas as pd
 import policy
+from drift import build_profile, drift_report
 from mlflow.exceptions import MlflowException
 from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
@@ -22,6 +23,7 @@ EXPERIMENT = os.environ.get("MLFLOW_CT_EXPERIMENT_NAME", "immocast-ct")
 OUTPUT_DIR = ROOT / os.environ.get("RUN_OUTPUT_DIR", "results")
 CANDIDATE_MODEL = "hgb"
 ALIAS = "champion"
+PROFILE_FILE = "training-profile.json"
 
 REQUIRED_COLUMNS = ["id_mutation", "date_mutation", *FEATURES, TARGET]
 RANGES = {
@@ -115,7 +117,20 @@ def registered_version(client: MlflowClient, run_id: str) -> str:
     return str(max(versions, key=lambda v: int(v.version)).version)
 
 
-def approve(client: MlflowClient, version: str, mae: float, dataset_version: str):
+def champion_profile(champion) -> dict | None:
+    run_id = champion.tags.get("approval_run_id")
+    if not run_id:
+        return None
+    try:
+        return mlflow.artifacts.load_dict(f"runs:/{run_id}/{PROFILE_FILE}")
+    except MlflowException:
+        return None
+
+
+def approve(client: MlflowClient, version: str, mae: float, dataset_version: str, train_df: pd.DataFrame):
+    run_id = mlflow.active_run().info.run_id
+    mlflow.log_dict(build_profile(train_df), PROFILE_FILE)
+    client.set_model_version_tag(MODEL_NAME, version, "approval_run_id", run_id)
     client.set_model_version_tag(MODEL_NAME, version, "approved", "true")
     client.set_model_version_tag(MODEL_NAME, version, "approved_mae", f"{mae:.4f}")
     client.set_model_version_tag(MODEL_NAME, version, "dataset_version", dataset_version)
@@ -127,6 +142,9 @@ def approve(client: MlflowClient, version: str, mae: float, dataset_version: str
 def write_outputs(result: dict, artifacts: dict[str, pd.DataFrame] | None = None):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / "decision.json").write_text(json.dumps(result, indent=2, default=str))
+    if result.get("drift"):
+        drift = {"threshold": result["drift_threshold"], "features": result["drift"], "flagged": result["drift_flagged"]}
+        (OUTPUT_DIR / "drift.json").write_text(json.dumps(drift, indent=2))
     manifests = OUTPUT_DIR / "manifests"
     if result.get("dataset_version"):
         manifests.mkdir(exist_ok=True)
@@ -185,6 +203,13 @@ def run_pipeline(dataset_version: str) -> int:
             mlflow.log_metrics({"champion_mae": champion_metrics["mae"], "champion_approved_mae": approved_mae})
             artifacts["champion_predictions.csv"] = champion_details
 
+            profile = champion_profile(champion)
+            if profile:
+                drift = drift_report(profile, eval_df)
+                flagged = sorted(f for f, value in drift.items() if value >= policy.DRIFT_THRESHOLD)
+                result.update(drift=drift, drift_flagged=flagged, drift_threshold=policy.DRIFT_THRESHOLD)
+                mlflow.log_metrics({f"drift_{f}": value for f, value in drift.items()})
+
             retrain = policy.should_retrain(champion_metrics["mae"], approved_mae)
             result["retrain_reason"] = retrain.reason
             if not retrain.passed:
@@ -211,7 +236,7 @@ def run_pipeline(dataset_version: str) -> int:
         log_candidate(candidate, train_df, register=gate.passed)
         if gate.passed:
             version = registered_version(client, run.info.run_id)
-            approve(client, version, candidate_metrics["mae"], dataset_version)
+            approve(client, version, candidate_metrics["mae"], dataset_version, train_df)
             decision = "promoted" if champion else "bootstrapped"
             result.update(decision=decision, reason=gate.reason, candidate_version=version, champion_after=version)
         else:
