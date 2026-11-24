@@ -1,0 +1,109 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: immocast-email
+    receivers:
+      - uid: immocast-email
+        type: email
+        settings:
+          addresses: ${ALERT_EMAIL}
+          singleEmail: true
+
+policies:
+  - orgId: 1
+    receiver: immocast-email
+    group_by: ["alertname"]
+    group_wait: 30s
+    group_interval: 1m
+    repeat_interval: 4h
+
+groups:
+  - orgId: 1
+    name: immocast-api
+    folder: ImmoCast
+    interval: 30s
+    rules:
+      - uid: immocast-api-down
+        title: API down
+        condition: C
+        for: 1m
+        noDataState: Alerting
+        execErrState: Alerting
+        annotations:
+          summary: The ImmoCast API has not answered Prometheus for 1 minute.
+          description: Check the api container (docker compose ps, docker compose logs api).
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: up{job="api"}
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+
+      - uid: immocast-error-rate
+        title: High error rate on /predict
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Alerting
+        annotations:
+          summary: More than 5 % of /predict requests failed with a server error (5xx) over 2 minutes.
+          description: Check /health and the error lines of the logs (level error). A 503 usually means the champion could not be loaded.
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: 100 * sum(rate(http_requests_total{path="/predict",status=~"5.."}[2m])) / sum(rate(http_requests_total{path="/predict"}[2m]))
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [5]}
+
+      - uid: immocast-feature-drift
+        title: Feature drift
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Alerting
+        annotations:
+          summary: "Drift of {{ $labels.feature }} is at or above 0.20 for 2 minutes: recent requests no longer look like the champion's training data."
+          description: Investigate the incoming traffic and compare with drift.json of the last CT run. Do not retrain automatically.
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: feature_drift
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0.1999]}
