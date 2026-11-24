@@ -32,6 +32,11 @@ class Metrics:
         self.model_info = Gauge(
             "model_info", "Model version currently served (always 1).", ["model_version"], registry=self.registry
         )
+        self.feature_drift = Gauge(
+            "feature_drift",
+            "Total variation distance between recent inputs and the champion's training data.",
+            ["feature"], registry=self.registry,
+        )
 
     def set_model(self, version: str | None):
         self.model_info.clear()

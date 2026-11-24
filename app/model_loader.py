@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
+import mlflow.artifacts
 import mlflow.sklearn
 import pandas as pd
 import structlog
@@ -19,6 +20,7 @@ DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "model.
 FEATURES = ["surface", "pieces", "arrondissement"]
 TARGET = "prix_m2"
 CHAMPION_ALIAS = "champion"
+PROFILE_FILE = "training-profile.json"
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,7 @@ class LoadedModel:
     source: str
     loaded_at: str
     run_id: str | None = None
+    profile: dict | None = None
 
 
 def model_path() -> Path:
@@ -75,7 +78,19 @@ def load_champion(model_name: str, alias: str = CHAMPION_ALIAS) -> LoadedModel |
         source=f"models:/{model_name}@{alias}",
         loaded_at=_now(),
         run_id=model_version.run_id,
+        profile=load_profile(model_version.tags.get("approval_run_id"), version),
     )
+
+
+def load_profile(run_id: str | None, version: str) -> dict | None:
+    if not run_id:
+        log.warning("training_profile_missing", model_version=version)
+        return None
+    try:
+        return mlflow.artifacts.load_dict(f"runs:/{run_id}/{PROFILE_FILE}")
+    except Exception:
+        log.exception("training_profile_load_failed", model_version=version)
+        return None
 
 
 def load_configured_model(path: str | Path | None = None) -> LoadedModel | None:

@@ -11,7 +11,8 @@
 data
 models
 mlruns
-ml
+ml/*
+!ml/drift.py
 tests
 scripts
 *.md
