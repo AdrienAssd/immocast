@@ -37,9 +37,9 @@ Each version contains `train.csv` and `evaluation.csv`. The evaluation block is 
 
 | Version | Git commit | DVC hash (`md5` in `data/<version>.dvc`) |
 |---|---|---|
-| v1 | `<commit>` | `689e331c235fbedada858e1c41c9c1c0.dir` |
-| v2 | `<commit>` | `27abb8e47b593cd059795c8c1cd7a08f.dir` |
-| v3 | `<commit>` | `6f87a8fb7f136f69a54a6bb323f8d545.dir` |
+| v1 | `05d1ae9` | `689e331c235fbedada858e1c41c9c1c0.dir` |
+| v2 | `05d1ae9` | `27abb8e47b593cd059795c8c1cd7a08f.dir` |
+| v3 | `05d1ae9` | `6f87a8fb7f136f69a54a6bb323f8d545.dir` |
 
 ## Reproduce
 

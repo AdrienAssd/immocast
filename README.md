@@ -2,6 +2,20 @@
 
 ImmoCast estimates the price of an apartment in Paris from its living area, number of rooms and postal code. The model is trained on real sales from the French DVF open data (data.gouv.fr).
 
+## Live application
+
+- Web app: <PROD_URL>
+- Loaded model version: <PROD_URL>/model-info
+- Readiness: <PROD_URL>/health
+
+Prediction API:
+
+```bash
+curl -X POST <PROD_URL>/predict -H "Content-Type: application/json" -d '{"surface": 45, "pieces": 2, "code_postal": "75011"}'
+```
+
+The free Render instance sleeps after 15 minutes without traffic: the first request can take about a minute.
+
 ## Project structure
 
 ```
