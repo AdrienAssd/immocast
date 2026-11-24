@@ -3,11 +3,13 @@ import math
 import os
 import threading
 
+import structlog
 from flask import Blueprint, current_app, jsonify, render_template, request
 
 from app.model_loader import FEATURES, TARGET, predict
 
 bp = Blueprint("main", __name__)
+log = structlog.get_logger("immocast")
 _reload_lock = threading.Lock()
 
 PARIS_POSTAL_CODES = {f"750{a:02d}" for a in range(1, 21)} | {"75116"}
@@ -75,6 +77,13 @@ def _model():
     return current_app.config.get("MODEL")
 
 
+def _predict(loaded, features: dict) -> dict:
+    result = predict(loaded, features)
+    current_app.extensions["metrics"].observe_prediction(result)
+    current_app.extensions["drift"].observe(features)
+    return result
+
+
 @bp.route("/", methods=["GET", "POST"])
 def index():
     result, error, status = None, None, 200
@@ -86,7 +95,7 @@ def index():
             status = 503
         else:
             try:
-                result = predict(loaded, parse_input(form))
+                result = _predict(loaded, parse_input(form))
             except InvalidInput as e:
                 error = str(e)
     page = render_template("index.html", result=result, error=error, form=form, model=loaded)
@@ -108,7 +117,7 @@ def predict_api():
         features = parse_input(data)
     except InvalidInput as e:
         return jsonify(error=str(e), errors=e.errors), 422
-    return jsonify(predict(loaded, features))
+    return jsonify(_predict(loaded, features))
 
 
 @bp.get("/health")
@@ -143,6 +152,7 @@ def reload_model():
         return jsonify(error="Reload is disabled."), 404
     provided = request.headers.get("Authorization", "")
     if not hmac.compare_digest(provided.encode(), f"Bearer {token}".encode()):
+        log.warning("reload_refused")
         return jsonify(error="Invalid or missing token."), 401
 
     with _reload_lock:
@@ -150,8 +160,12 @@ def reload_model():
         previous_version = previous.version if previous else None
         loaded = current_app.extensions["model_loader"]()
         if loaded is None:
+            log.error("model_reload_failed", model_version=previous_version)
             return jsonify(status="failed", model_version=previous_version), 503
         current_app.config["MODEL"] = loaded
+        current_app.extensions["metrics"].set_model(loaded.version)
+        current_app.extensions["drift"].reset(loaded.profile)
+    log.info("model_reloaded", previous_version=previous_version, model_version=loaded.version)
     return jsonify(
         status="reloaded", previous_version=previous_version, model_version=loaded.version
     )

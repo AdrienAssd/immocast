@@ -22,6 +22,7 @@ WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY app/ app/
+COPY ml/drift.py ml/drift.py
 
 USER appuser
 EXPOSE 8000

@@ -112,6 +112,41 @@ Open http://localhost:5000.
 | 45 | 2 | 69001 | Error: not a Paris postal code |
 | 2 | 1 | 75011 | Error: living area out of range |
 
+## Monitoring
+
+The API writes one JSON log line per event to standard output (`request`, `prediction_made`, `model_loaded`, `model_reloaded`, `drift_computed`), each with a `request_id` that is also returned in the `X-Request-ID` header. It exposes Prometheus metrics at `/metrics`: requests, latency, predictions and predicted prices per model version, the model version served and the drift of each feature against the champion's training data.
+
+Run the monitoring stack locally (API, Prometheus, Grafana):
+
+```bash
+cp .env.example .env    # fill in the DagsHub and SMTP values
+docker compose up -d --build
+```
+
+| Service | URL |
+|---|---|
+| API | http://localhost:8000 |
+| Prometheus targets | http://localhost:9090/targets |
+| Grafana (dashboard *ImmoCast API*, login `admin`) | http://localhost:3000 |
+
+Send traffic:
+
+```bash
+python scripts/replay.py --file data/v2/train.csv --shuffle            # normal traffic
+python scripts/replay.py --file data/v3/evaluation.csv --shifted --rate 5   # drifted traffic
+python scripts/replay.py --file data/v1/evaluation.csv --broken --limit 20  # rejected inputs
+```
+
+Search the logs (Git Bash, needs `jq`):
+
+```bash
+docker compose logs api --no-log-prefix | jq -R -c 'fromjson? | select(.level == "error")'
+docker compose logs api --no-log-prefix | jq -R -c 'fromjson? | select(.request_id == "<id>")'
+docker compose logs api --no-log-prefix | jq -R -r 'fromjson? | select(.event == "prediction_made") | .model_version' | sort | uniq -c
+```
+
+Alerts and their triggers are described in `DEPLOYMENT.md`.
+
 ## Branch flow
 
 | Branch | Role | Updated by |
