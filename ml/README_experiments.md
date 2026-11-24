@@ -21,6 +21,10 @@ Features: living area, number of rooms, arrondissement. Target: price per m².
 
 `ml/train.py` logs each training run in the MLflow experiment `immocast` on DagsHub. `ml/pipeline.py` logs each continuous training run in the experiment `immocast-ct`. Each run records the Git commit, the dataset version and its DVC hash, the hyperparameters, the metrics, the model and the evaluation predictions. Continuous training runs also record the retraining and promotion decision and the registry versions before and after (`decision/decision.json`).
 
+- MLflow tracking server and registry: https://dagshub.com/AdrienAssd/immocast.mlflow
+- Production registry model: `immocast`, alias `champion`
+- Development registry model: `immocast-dev`
+
 ## Baseline and candidate on v1
 
 | Run | Model | Dataset | MAE (€/m²) | MAPE |
@@ -45,26 +49,37 @@ The trigger is a drop in performance rather than every new data version: retrain
 
 ## Continuous training results
 
-Expected decisions, measured locally with the same code and data:
+All runs below were started from the `Continuous training` workflow on `main` (commit `9ef795f`), against the shared DagsHub registry and the production service on Render. Each run reloaded the production model and verified the expected version with a live prediction.
 
-| Run | Champion MAE | Candidate MAE | Decision |
-|---|---|---|---|
-| v1 | none | 1,898 | **Bootstrapped**: below the 2,300 floor |
-| v2 | 2,102 (+10.7 % since approval) | 2,019 | **Retrained and promoted**: improvement 3.9 % ≥ 3 % |
-| v3 | 1,985 (−1.7 % since approval) | not trained | **Champion retained**: degradation below 5 % |
+| Run | Champion MAE | Candidate MAE | Decision | Champion before → after |
+|---|---|---|---|---|
+| v1 | none | 1,898 (MAPE 20.3 %) | **Bootstrapped**: below the 2,300 floor | none → **1** |
+| v2 | 2,102 (+10.7 % since approval at 1,898) | 2,019 (MAPE 23.6 %) | **Retrained and promoted**: improvement 3.9 % ≥ 3 % | 1 → **2** |
+| v3 | 1,985 (−1.7 % since approval at 2,019) | not trained | **Champion retained**: change below the 5 % retraining threshold | 2 → **2** |
+| Rollback | – | – | **Rolled back** to the previously approved version 1 | 2 → **1** |
 
-The v2 champion degrades because Paris prices fell in 2023 and 2024: a model trained on 2021–2022 overestimates later sales. Retraining on data up to 2023 corrects it.
+Why the decisions differ:
+
+- **v2 retrains.** Paris prices fell in 2023 and 2024. The v1 champion, trained on 2021–2022 sales, overestimates the 2024 evaluation block, and its MAE degrades by 10.7 %, above the 5 % threshold. The candidate trained on data up to 2023 brings the MAE down to 2,019, a 3.9 % improvement on the same rows, so it clears the 3 % promotion gate.
+- **v3 keeps the champion.** On the 2025 evaluation block the v2 champion scores 1,985, slightly better than when it was approved. No retraining is needed, so production is unchanged.
+- **Rollback.** Version 1 was tagged `approved=true` when it was bootstrapped, so it is a valid rollback target. The alias moved from 2 to 1 and the application served version 1 afterwards.
+
+With a stricter promotion gate of 4 %, the v2 candidate (3.9 %) would have been rejected and version 1 kept: the gate value is a trade-off between reacting to market changes and avoiding needless production changes.
 
 ### Production evidence
 
-Fill in after running the CT workflow on the shared registry:
-
-| Run | Workflow run | MLflow run | Decision | Champion before | Champion after |
+| Run | GitHub Actions run | MLflow run (`immocast-ct`) | Dataset and DVC hash | Decision | Registry versions |
 |---|---|---|---|---|---|
-| v1 | `<link>` | `<run id>` | | | |
-| v2 | `<link>` | `<run id>` | | | |
-| v3 | `<link>` | `<run id>` | | | |
-| Rollback | `<link>` | `<run id>` | | | |
+| v1 | [45371133271](https://github.com/AdrienAssd/immocast/actions/runs/45371133271) | `3458c7bfa4064c9884dc56a7a7841a60` | v1, `689e331c235fbedada858e1c41c9c1c0.dir` | `bootstrapped` | candidate 1, champion none → 1 |
+| v2 | [45371997114](https://github.com/AdrienAssd/immocast/actions/runs/45371997114) | `4b27216f9bba45d4b307c31bc5a26bf0` | v2, `27abb8e47b593cd059795c8c1cd7a08f.dir` | `promoted` | candidate 2, champion 1 → 2 |
+| v3 | [45372707093](https://github.com/AdrienAssd/immocast/actions/runs/45372707093) | `a61629906a8e4af38a21eeb221104ea4` | v3, `6f87a8fb7f136f69a54a6bb323f8d545.dir` | `retained` | champion 2 → 2 |
+| Rollback | [45373245558](https://github.com/AdrienAssd/immocast/actions/runs/45373245558) | `75885737daff4b069a1f433be45b68ef` | – | `rolled_back` | champion 2 → 1 |
+
+Each workflow run keeps its `ct-results-*` artifact with `decision.json`, the champion and candidate predictions on the evaluation split, and the DVC pointer of the dataset version used. The same files are logged in the MLflow run under `decision/`.
+
+## Production model choice
+
+The production model is the registry version selected by the `champion` alias of `immocast`. Version 2 (`hgb` trained on v2) has the best evidence: it passed the promotion gate on the 2024 evaluation block and stayed stable on the 2025 block (MAE 1,985). Version 1 was restored during the rollback demonstration. Run the rollback workflow with version 2 to put the best approved model back in production.
 
 ## Rollback
 

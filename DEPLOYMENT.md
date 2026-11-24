@@ -98,11 +98,13 @@ Render settings: image-backed web service, Docker Hub credentials for the privat
 Deploy a given commit by hand:
 
 ```bash
-docker build --build-arg GIT_SHA=<sha> -t <dockerhub-user>/immocast:<sha> .
+docker build --platform linux/amd64 --build-arg GIT_SHA=<sha> -t <dockerhub-user>/immocast:<sha> .
 docker push <dockerhub-user>/immocast:<sha>
 curl -X POST "<render-deploy-hook>&imgURL=docker.io%2F<dockerhub-user>%2Fimmocast%3A<sha>"
 python scripts/smoke_test.py --url <prod-url> --expected-sha <sha>
 ```
+
+`--platform linux/amd64` is required when building on an Apple Silicon Mac: Render only runs `linux/amd64` images. GitHub Actions runners already build for that platform.
 
 Run the production container locally with a model file:
 
