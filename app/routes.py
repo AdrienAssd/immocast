@@ -80,6 +80,7 @@ def _model():
 def _predict(loaded, features: dict) -> dict:
     result = predict(loaded, features)
     current_app.extensions["metrics"].observe_prediction(result)
+    current_app.extensions["drift"].observe(features)
     return result
 
 
@@ -163,6 +164,7 @@ def reload_model():
             return jsonify(status="failed", model_version=previous_version), 503
         current_app.config["MODEL"] = loaded
         current_app.extensions["metrics"].set_model(loaded.version)
+        current_app.extensions["drift"].reset(loaded.profile)
     log.info("model_reloaded", previous_version=previous_version, model_version=loaded.version)
     return jsonify(
         status="reloaded", previous_version=previous_version, model_version=loaded.version
