@@ -133,6 +133,45 @@ Render only routes traffic to a new deploy once `/health` returns 200. If the ne
 
 After a model change, `/reload` loads the new champion before swapping it in. If the new version cannot be loaded, `/reload` returns 503 and the service keeps serving the previous model, so users are not affected. The workflow then fails at the reload or smoke test step, while the registry alias already points to the new version. Because a restart would load that alias, roll back right away with the continuous training workflow (`operation=rollback`, previous approved version from `decision.json`), then investigate the failed version.
 
+## Monitoring and alerting
+
+### Logs
+
+The API logs JSON lines to standard output with `structlog`. The level comes from `LOG_LEVEL`. Each request gets a request ID (read from `X-Request-ID` or generated) bound to every line of that request and returned in the response header. Requests are logged with `method`, `path`, `status` and `duration_ms`; predictions with `model_version`, `prix_m2`, `arrondissement`, `latency_ms`, `n_features` and `n_missing`. Full inputs, the reload token and MLflow credentials are never logged. Rejected inputs are logged as `warning`, server errors as `error`. On Render the same lines appear in the service logs. Locally, Docker keeps at most 3 log files of 10 MB for the API.
+
+### Metrics
+
+| Metric | Type | Labels |
+|---|---|---|
+| `http_requests_total` | counter | `method`, `path`, `status` |
+| `http_request_duration_seconds` | histogram | `path` |
+| `predictions_total` | counter | `model_version` |
+| `predicted_price_m2` | histogram | `model_version` |
+| `model_info` | gauge, always 1 | `model_version` |
+| `feature_drift` | gauge | `feature` |
+
+`feature_drift` is the total variation distance between the last 500 inputs and the champion's training data, recomputed every 100 predictions with `compare_distributions` from `ml/drift.py`, the same code the pipeline uses for `drift.json`. The reference is the `training-profile.json` artifact of the run that approved the champion (its `approval_run_id` tag), so drift follows the champion after a promotion or a rollback. A model loaded from a file has no profile and publishes no drift.
+
+### Stack
+
+`docker compose up -d --build` starts the API, Prometheus (scrapes `api:8000/metrics` every 5 s) and Grafana. Grafana provisioning creates the Prometheus data source, the *ImmoCast API* dashboard (`monitoring/grafana/dashboards/immocast.json`), the e-mail contact point and the alert rules (`monitoring/grafana/provisioning/alerting/alerts.yml`).
+
+### Alerts
+
+| Alert | Condition | How to trigger it locally |
+|---|---|---|
+| API down | `up{job="api"}` is 0 for 1 minute | `docker compose stop api`, then `docker compose start api` |
+| High error rate on /predict | More than 5 % of `/predict` requests return 5xx over 2 minutes | Set `MODEL_NAME=does-not-exist` in `.env`, `docker compose up -d api`, replay traffic (every prediction returns 503) |
+| Feature drift | A feature's drift is at or above 0.20 for 2 minutes | `python scripts/replay.py --file data/v3/evaluation.csv --shifted --rate 5` |
+
+The drift alert asks to investigate, not to retrain: retraining is decided by the performance rules of the continuous training workflow. Real DVF versions drift very little (about 0.02 between v1, v2 and v3), so the `--shifted` replay, which only sends large apartments in central arrondissements, simulates a change of clientele.
+
+E-mails are sent through the SMTP server configured in `.env` (`SMTP_HOST` as `host:port`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`) to `ALERT_EMAIL`. Mailtrap's free sandbox or a Gmail app password both work.
+
+### Watch a rollback
+
+Run the rollback workflow, then `docker compose restart api` (or `POST /reload`) and replay normal traffic. The *Model version served* and *Predictions per second by model version* panels change version, and the `prediction_made` log lines carry the new `model_version`.
+
 ## The twelve factors
 
 | Factor | Implementation |

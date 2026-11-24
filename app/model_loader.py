@@ -1,23 +1,26 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
+import mlflow.artifacts
 import mlflow.sklearn
 import pandas as pd
+import structlog
 from mlflow.tracking import MlflowClient
 
-logger = logging.getLogger(__name__)
+log = structlog.get_logger("immocast.model")
 
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "model.joblib"
 FEATURES = ["surface", "pieces", "arrondissement"]
 TARGET = "prix_m2"
 CHAMPION_ALIAS = "champion"
+PROFILE_FILE = "training-profile.json"
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,7 @@ class LoadedModel:
     source: str
     loaded_at: str
     run_id: str | None = None
+    profile: dict | None = None
 
 
 def model_path() -> Path:
@@ -51,10 +55,10 @@ def load_model(path: str | Path | None = None) -> LoadedModel | None:
         model = joblib.load(path)
         version = _file_version(path)
     except Exception:
-        logger.exception("Could not load the model from %s", path)
+        log.exception("model_load_failed", source=str(path))
         return None
 
-    logger.info("Loaded model %s from %s", version, path)
+    log.info("model_loaded", model_version=version, source=str(path))
     return LoadedModel(model=model, version=version, source=str(path), loaded_at=_now())
 
 
@@ -64,17 +68,29 @@ def load_champion(model_name: str, alias: str = CHAMPION_ALIAS) -> LoadedModel |
         version = str(model_version.version)
         model = mlflow.sklearn.load_model(f"models:/{model_name}/{version}")
     except Exception:
-        logger.exception("Could not load %s@%s from MLflow", model_name, alias)
+        log.exception("model_load_failed", source=f"models:/{model_name}@{alias}")
         return None
 
-    logger.info("Loaded %s version %s (alias %s)", model_name, version, alias)
+    log.info("model_loaded", model_version=version, source=f"models:/{model_name}@{alias}")
     return LoadedModel(
         model=model,
         version=version,
         source=f"models:/{model_name}@{alias}",
         loaded_at=_now(),
         run_id=model_version.run_id,
+        profile=load_profile(model_version.tags.get("approval_run_id"), version),
     )
+
+
+def load_profile(run_id: str | None, version: str) -> dict | None:
+    if not run_id:
+        log.warning("training_profile_missing", model_version=version)
+        return None
+    try:
+        return mlflow.artifacts.load_dict(f"runs:/{run_id}/{PROFILE_FILE}")
+    except Exception:
+        log.exception("training_profile_load_failed", model_version=version)
+        return None
 
 
 def load_configured_model(path: str | Path | None = None) -> LoadedModel | None:
@@ -87,7 +103,18 @@ def load_configured_model(path: str | Path | None = None) -> LoadedModel | None:
 
 
 def predict(loaded: LoadedModel, features: dict) -> dict:
-    prix_m2 = float(loaded.model.predict(pd.DataFrame([features], columns=FEATURES))[0])
+    start = time.perf_counter()
+    row = pd.DataFrame([features], columns=FEATURES)
+    prix_m2 = float(loaded.model.predict(row)[0])
+    log.info(
+        "prediction_made",
+        model_version=loaded.version,
+        prix_m2=round(prix_m2),
+        arrondissement=features["arrondissement"],
+        latency_ms=round((time.perf_counter() - start) * 1000, 2),
+        n_features=len(FEATURES),
+        n_missing=int(row.isna().sum().sum()),
+    )
     return {
         "prix_m2": round(prix_m2),
         "prix_total": round(prix_m2 * features["surface"]),
