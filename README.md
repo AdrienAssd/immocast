@@ -134,6 +134,7 @@ Data, models, virtual environments and credentials are never committed (see `.gi
 | `CI/CD` (`.github/workflows/cicd.yml`) | Pull request into `dev`, `staging` or `main` | Ruff lint, pytest, Docker build, container started with a test model and smoke-tested |
 | `CI/CD` | Push to `staging` | Same checks on the release candidate (staging validation) |
 | `CI/CD` | Push to `main` | Same checks, then push `immocast:<commit sha>` to Docker Hub, deploy to Render and smoke-test the live URL |
+| `Continuous training` (`.github/workflows/ct-pipeline.yml`) | Manual (`workflow_dispatch`) with `operation`, `dataset_version` and `rollback_version` | Pulls the selected DVC dataset version, validates it, evaluates the champion, retrains and promotes when the rules in `ml/policy.py` allow it, or rolls back to an approved version. Then reloads the production model and checks it with a live prediction |
 
 The `Lint and tests` and `Docker build and smoke test` jobs are required checks on `dev`, `staging` and `main`. Deployment details are in `DEPLOYMENT.md`.
 

@@ -39,6 +39,28 @@ The smoke test (`scripts/smoke_test.py`) checks:
 
 In production, the expected model version is the version selected by the `champion` alias in the MLflow registry. Until a champion exists, the workflow only checks that the new image is live.
 
+## Continuous training workflow
+
+Workflow file: `.github/workflows/ct-pipeline.yml`, started manually from *Actions → Continuous training → Run workflow* on `main`. Runs are serialized so two operations never move the production model at the same time.
+
+| Input | Values |
+|---|---|
+| `operation` | `pipeline` or `rollback` |
+| `dataset_version` | `v1`, `v2` or `v3`: selecting a version simulates the delivery of a new data batch |
+| `rollback_version` | A previously approved model version, for `rollback` only |
+
+Pipeline steps (`ml/pipeline.py`):
+
+1. Fetch the selected version with `dvc pull` and validate it: required columns, missing values, value ranges, duplicates, no overlap and chronological order between training and evaluation. A failure stops the run before any registry change.
+2. Load the champion (`models:/immocast@champion`), score it on the evaluation split and apply the retraining rule. Without a champion, train a baseline to bootstrap.
+3. Train a candidate on the training split and compare it with the champion on the same evaluation rows using the quality floor and the minimum improvement in `ml/policy.py`.
+4. Register a passing candidate, tag it `approved=true` and move the `champion` alias to it. A failing candidate is not registered and the champion is kept, with the reason in `decision.json`.
+5. Call `POST /reload` on the production service (protected by `RELOAD_TOKEN`) and run the smoke test against the live URL with the expected champion version.
+
+The decision, the metrics, the registry versions before and after and the DVC pointer are uploaded as the `ct-results-*` artifact and logged in the MLflow experiment `immocast-ct`.
+
+Additional secret: `RELOAD_TOKEN` (same value as in the Render environment).
+
 ## Image identification
 
 Every deployed image is tagged with the full Git commit SHA: `<dockerhub-user>/immocast:<sha>`. The same SHA is baked into the image (`GIT_SHA`) and returned by `/model-info` as `git_sha`, so the commit running in production can always be checked.
@@ -92,9 +114,22 @@ docker run --rm -p 8000:8000 -v "${PWD}/models:/app/models:ro" -e GIT_SHA=local 
 
 Redeploy a previous image: run the deploy hook with the `imgURL` of an earlier commit SHA (see *Reproduce a deployment*), or pick the previous deploy in the Render dashboard and choose *Rollback*. Then run the smoke test with that SHA.
 
+## Roll back the model
+
+Run *Actions → Continuous training → Run workflow* with `operation=rollback` and `rollback_version=<approved version>`. The workflow moves the `champion` alias back, reloads the production model and verifies the restored version with a live prediction. A version that does not exist or was never approved is refused and the alias does not move.
+
+Equivalent command:
+
+```bash
+python ml/pipeline.py --rollback <model version>
+curl -X POST "<prod-url>/reload" -H "Authorization: Bearer <reload-token>"
+```
+
 ## If the service does not become ready
 
 Render only routes traffic to a new deploy once `/health` returns 200. If the new container never becomes ready, Render keeps serving the previous deploy and marks the new one as failed. The workflow smoke test then fails, so the problem is visible on the commit. Check the Render logs, fix the cause, or roll back.
+
+After a model change, `/reload` loads the new champion before swapping it in. If the new version cannot be loaded, `/reload` returns 503 and the service keeps serving the previous model, so users are not affected. The workflow then fails at the reload or smoke test step, while the registry alias already points to the new version. Because a restart would load that alias, roll back right away with the continuous training workflow (`operation=rollback`, previous approved version from `decision.json`), then investigate the failed version.
 
 ## The twelve factors
 
