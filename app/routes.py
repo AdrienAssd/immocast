@@ -77,6 +77,12 @@ def _model():
     return current_app.config.get("MODEL")
 
 
+def _predict(loaded, features: dict) -> dict:
+    result = predict(loaded, features)
+    current_app.extensions["metrics"].observe_prediction(result)
+    return result
+
+
 @bp.route("/", methods=["GET", "POST"])
 def index():
     result, error, status = None, None, 200
@@ -88,7 +94,7 @@ def index():
             status = 503
         else:
             try:
-                result = predict(loaded, parse_input(form))
+                result = _predict(loaded, parse_input(form))
             except InvalidInput as e:
                 error = str(e)
     page = render_template("index.html", result=result, error=error, form=form, model=loaded)
@@ -110,7 +116,7 @@ def predict_api():
         features = parse_input(data)
     except InvalidInput as e:
         return jsonify(error=str(e), errors=e.errors), 422
-    return jsonify(predict(loaded, features))
+    return jsonify(_predict(loaded, features))
 
 
 @bp.get("/health")
@@ -156,6 +162,7 @@ def reload_model():
             log.error("model_reload_failed", model_version=previous_version)
             return jsonify(status="failed", model_version=previous_version), 503
         current_app.config["MODEL"] = loaded
+        current_app.extensions["metrics"].set_model(loaded.version)
     log.info("model_reloaded", previous_version=previous_version, model_version=loaded.version)
     return jsonify(
         status="reloaded", previous_version=previous_version, model_version=loaded.version

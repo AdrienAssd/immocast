@@ -5,3 +5,4 @@ joblib
 waitress
 mlflow==2.22.*
 structlog==26.*
+prometheus-client==0.26.*
