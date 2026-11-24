@@ -62,7 +62,7 @@ jobs:
         run: |
           mkdir -p models
           python -c "from tests.conftest import make_fake_model; make_fake_model('models/model.joblib')"
-          echo "EXPECTED_VERSION=$(python -c "from app.model_loader import load_model; print(load_model('models/model.joblib').version)")" >> "$GITHUB_ENV"
+          echo "EXPECTED_VERSION=$(python -c "from app.model_loader import load_model; print(load_model('models/model.joblib').version)" | tail -n 1)" >> "$GITHUB_ENV"
 
       - name: Build the image
         run: docker build --build-arg GIT_SHA="$GITHUB_SHA" -t immocast:ci .

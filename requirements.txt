@@ -4,3 +4,4 @@ scikit-learn==1.9.1
 joblib
 waitress
 mlflow==2.22.*
+structlog==26.*
